@@ -3513,70 +3513,71 @@ int ios_system(const char* inputCmd) {
             NSString* functionName = commandStructure[1];
             // Python, Perl and TeX can have multiple commands calling themselves:
             // hasPrefix covers python, python3, python3.9.
-            if ([commandName hasPrefix: @"python"]) {
-                // Ability to start multiple python3 scripts (required for Jupyter notebooks):
-                // start by increasing the number of the interpreter, until we're out.
-                int numInterpreter = 0;
-                if ((currentPythonInterpreter < numPythonInterpreters) && (!PythonIsRunning[currentPythonInterpreter])) {
-                    numInterpreter = currentPythonInterpreter;
-                    currentPythonInterpreter++;
-                } else {
-                    NSDate *start = [NSDate date];
-                    NSDate *now = [NSDate date];
-                    NSTimeInterval timeInterval = [now timeIntervalSinceDate:start];
-                    bool timeout = true;
-                    while (timeInterval < 1) { // keep trying for 1 second
-                        while  (numInterpreter < numPythonInterpreters) {
-                            if (PythonIsRunning[numInterpreter] == false) {
-                                timeout = false;
-                                break;
-                            }
-                            numInterpreter++;
-                        }
-                        if (!timeout) break; // need to break twice!
-                        numInterpreter = 0;
-                        now = [NSDate date];
-                        timeInterval = [now timeIntervalSinceDate:start];
-                    }
-                    if (timeout) {
-                        if (showPythonInterpreterAlert) {
-                            // Only show this alert once per session:
-                            display_alert(@"Too many Python scripts", @"There are too many Python interpreters running at the same time. Try closing some of them.");
-                            NSLog(@"%@", @"Too many python scripts running simultaneously. Try closing some notebooks.\n");
-                            showPythonInterpreterAlert = false;
-                            currentSession->global_errno = ENOENT;
-                        }
-                        function = &too_many_scripts;
-                        functionName = @"notAValidCommand";
-                        argv[0][0] = 'x'; // prevent reinitialization in cleanup_function
-                    } else {
-                        currentPythonInterpreter = numInterpreter;
-                    }
-                }
-                if ((numInterpreter == 0) && (strlen(argv[0]) > 7)) {
-                    // python3.x creates issues, so we truncate to 'python3'
-                    argv[0][7] = 0;
-                }
-                if ((numInterpreter >= 0) && (numInterpreter < numPythonInterpreters)) {
-                    params->numInterpreter = numInterpreter;
-                    PythonIsRunning[numInterpreter] = true;
-                    if (numInterpreter > 0) {
-                        if ([commandName isEqualToString: @"python"]) {
-                            // Add space for an extra letter at the end of "python" (+1 for "A", +1 for '\0')
-                            argv[0] = realloc(argv[0], strlen(argv[0]) + 2);
-                        }
-                        char suffix[2];
-                        suffix[0] = 'A' + (numInterpreter - 1);
-                        suffix[1] = 0;
-                        argv[0][6] = suffix[0];
-                        argv[0][7] = 0;
-                        commandName = [@"python" stringByAppendingString: [NSString stringWithCString: suffix encoding:NSUTF8StringEncoding]];
-                        NSLog(@"Python new commandName: %s", commandName.UTF8String);
-                        libraryName = [[commandName stringByAppendingString: @".framework/"] stringByAppendingString: commandName];
-                        NSLog(@"Python new libraryName: %s", libraryName.UTF8String);
-                    }
-                }
-            } else if ([commandName hasPrefix: @"perl"]) {
+            // if ([commandName hasPrefix: @"python"]) {
+            //     // Ability to start multiple python3 scripts (required for Jupyter notebooks):
+            //     // start by increasing the number of the interpreter, until we're out.
+            //     int numInterpreter = 0;
+            //     if ((currentPythonInterpreter < numPythonInterpreters) && (!PythonIsRunning[currentPythonInterpreter])) {
+            //         numInterpreter = currentPythonInterpreter;
+            //         currentPythonInterpreter++;
+            //     } else {
+            //         NSDate *start = [NSDate date];
+            //         NSDate *now = [NSDate date];
+            //         NSTimeInterval timeInterval = [now timeIntervalSinceDate:start];
+            //         bool timeout = true;
+            //         while (timeInterval < 1) { // keep trying for 1 second
+            //             while  (numInterpreter < numPythonInterpreters) {
+            //                 if (PythonIsRunning[numInterpreter] == false) {
+            //                     timeout = false;
+            //                     break;
+            //                 }
+            //                 numInterpreter++;
+            //             }
+            //             if (!timeout) break; // need to break twice!
+            //             numInterpreter = 0;
+            //             now = [NSDate date];
+            //             timeInterval = [now timeIntervalSinceDate:start];
+            //         }
+            //         if (timeout) {
+            //             if (showPythonInterpreterAlert) {
+            //                 // Only show this alert once per session:
+            //                 display_alert(@"Too many Python scripts", @"There are too many Python interpreters running at the same time. Try closing some of them.");
+            //                 NSLog(@"%@", @"Too many python scripts running simultaneously. Try closing some notebooks.\n");
+            //                 showPythonInterpreterAlert = false;
+            //                 currentSession->global_errno = ENOENT;
+            //             }
+            //             function = &too_many_scripts;
+            //             functionName = @"notAValidCommand";
+            //             argv[0][0] = 'x'; // prevent reinitialization in cleanup_function
+            //         } else {
+            //             currentPythonInterpreter = numInterpreter;
+            //         }
+            //     }
+            //     if ((numInterpreter == 0) && (strlen(argv[0]) > 7)) {
+            //         // python3.x creates issues, so we truncate to 'python3'
+            //         argv[0][7] = 0;
+            //     }
+            //     if ((numInterpreter >= 0) && (numInterpreter < numPythonInterpreters)) {
+            //         params->numInterpreter = numInterpreter;
+            //         PythonIsRunning[numInterpreter] = true;
+            //         if (numInterpreter > 0) {
+            //             if ([commandName isEqualToString: @"python"]) {
+            //                 // Add space for an extra letter at the end of "python" (+1 for "A", +1 for '\0')
+            //                 argv[0] = realloc(argv[0], strlen(argv[0]) + 2);
+            //             }
+            //             char suffix[2];
+            //             suffix[0] = 'A' + (numInterpreter - 1);
+            //             suffix[1] = 0;
+            //             argv[0][6] = suffix[0];
+            //             argv[0][7] = 0;
+            //             commandName = [@"python" stringByAppendingString: [NSString stringWithCString: suffix encoding:NSUTF8StringEncoding]];
+            //             NSLog(@"Python new commandName: %s", commandName.UTF8String);
+            //             libraryName = [[commandName stringByAppendingString: @".framework/"] stringByAppendingString: commandName];
+            //             NSLog(@"Python new libraryName: %s", libraryName.UTF8String);
+            //         }
+            //     }
+            // } else
+             if ([commandName hasPrefix: @"perl"]) {
                 // Ability to start multiple perl scripts (required for cpan):
                 // start by increasing the number of the interpreter, until we're out.
                 int numInterpreter = 0;
