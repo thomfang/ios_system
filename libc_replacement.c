@@ -272,6 +272,35 @@ inline void ios_storeThreadId(pthread_t thread) {
     // To avoid issues when a command starts a command without forking,
     // we only store thread IDs for the first thread of the "process".
     // fprintf(stderr, "Unlocking pid %d, storing thread %x current value: %x\n", current_pid, thread,  thread_ids[current_pid]);
+    if (thread == NULL) {
+        // Callers in ios_system.m use `ios_storeThreadId(0)` on early-out
+        // error paths (empty argv, popen failure, NULL command, "command not
+        // found") AFTER `ios_nextAvailablePid` has already allocated a pid
+        // and bumped `current_pid` + `last_allocated_pid`. The legacy
+        // behavior just wrote `thread_ids[current_pid] = 0`, which left the
+        // pid in a half-released state: the slot was no longer findable by
+        // `ios_releaseThread` (because no real thread was ever stored, and
+        // -1 / NULL don't match a live pthread_t), but `current_pid` was
+        // never restored to the parent. Every subsequent
+        // `ios_nextAvailablePid` call inherits this orphaned `current_pid`
+        // as `previousPidId`, snapshots `environment[current_pid]` instead
+        // of `environ`, and the host's libc setenv() updates become
+        // invisible to all future ios_system children — observable in the
+        // embedding app as `printenv X` returning empty after the host
+        // calls `setenv("X", ...)`.
+        //
+        // Fix: treat `ios_storeThreadId(NULL)` as an explicit release. Mark
+        // the slot free (thread_ids = 0) and restore `current_pid` to the
+        // parent pid that was active before this allocation, mirroring what
+        // `ios_releaseThread` would do for a real thread.
+        thread_ids[current_pid] = 0;
+        pid_t parent = previousPid[current_pid];
+        if (parent >= 0 && parent < IOS_MAX_THREADS) {
+            current_pid = parent;
+        }
+        pthread_mutex_unlock(&pid_mtx);
+        return;
+    }
     if (thread_ids[current_pid] == -1) {
         thread_ids[current_pid] = thread;
     }
@@ -517,6 +546,22 @@ void clearEnvironment(pid_t pid) {
 
 
 char** environmentVariables(pid_t pid) {
+    // pid 0 represents the embedding host app's root context. Swift /
+    // Objective-C code in the host updates the process environment via
+    // libc setenv() (writing to the global `environ`). If we cached a
+    // snapshot into environment[0] — which happens whenever sh's
+    // fork-exec path runs `execve(...)` while current_pid == 0 (the
+    // typical case for `||` / `&&` / `;` short-circuit operators in
+    // user commands) — every subsequently spawned child pid would copy
+    // that frozen snapshot via storeEnvironment, and host-side setenv
+    // updates would be silently masked.
+    //
+    // Always pass through to `environ` for pid 0 so the host env and
+    // ios_system's view stay in sync. The environment[0] slot may still
+    // be written by storeEnvironment(), but nothing reads it anymore.
+    if (pid == 0) {
+        return environ;
+    }
     if (environment[pid] != NULL) {
         return environment[pid];
     } else {
@@ -529,8 +574,27 @@ void ios_releaseThread(pthread_t thread) {
     if (thread == NULL) {
         return;
     }
+    // Iterate in REVERSE pid order (LIFO release discipline).
+    //
+    // Why: sh's mini-shell does NOT fork — when sh runs `echo a || echo b`
+    // and dispatches the inner `echo a` through `execve` → `ios_execve` →
+    // `ios_system`, the inner command runs on the **same OS thread** as
+    // sh. Both sh's pid slot and echo's pid slot end up with
+    // `thread_ids[p] == thread` simultaneously. The inner command's
+    // cleanup fires first; with forward iteration we'd match sh's slot
+    // (the lower pid number) instead of echo's, corrupting current_pid
+    // and leaking an active-looking environment[pid] slot for echo that
+    // outlives the command. Subsequent commands then read a frozen env
+    // snapshot through that leaked slot and miss host-side setenv()
+    // updates.
+    //
+    // Reverse iteration matches the most-recently-allocated pid first,
+    // which under non-overflow conditions is always the child whose
+    // cleanup is firing. After overflow (pid_overflow == 1) pids wrap
+    // and strict LIFO is no longer guaranteed, but that path was
+    // already broken; we don't make it worse.
     // TODO: this is inefficient. Replace with NSMutableArray?
-    for (int p = 0; p < IOS_MAX_THREADS; p++) {
+    for (int p = IOS_MAX_THREADS - 1; p >= 0; p--) {
         if (thread_ids[p] == thread) {
             // fprintf(stderr, "Found Id %d\n", p);
             // Don't reset the environment; sometimes, commands try to change the environment while it is being erased.
@@ -547,7 +611,8 @@ void ios_releaseThread(pthread_t thread) {
 
 void ios_releaseBackgroundThread(pthread_t thread) {
     // Same as ios_releaseThread, but do not reset the directory.
-    for (int p = 0; p < IOS_MAX_THREADS; p++) {
+    // Same LIFO-release reasoning — see ios_releaseThread for the why.
+    for (int p = IOS_MAX_THREADS - 1; p >= 0; p--) {
         if (thread_ids[p] == thread) {
             // fprintf(stderr, "Found Id %d\n", p);
             current_pid = previousPid[p];
