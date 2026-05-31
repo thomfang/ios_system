@@ -97,6 +97,16 @@ static void initSessionParameters(sessionParameters* sp) {
     sp->lastThreadId = 0;
     sp->mainThreadId = 0;
     NSString* currentDirectory = [NSFileManager.defaultManager currentDirectoryPath];
+    // currentDirectoryPath returns nil when the process cwd has been deleted or
+    // is inaccessible (getcwd fails). [nil UTF8String] is NULL, and the strcpy
+    // below would then strlen(NULL) and crash. Fall back to the home directory
+    // so session init never dereferences a NULL string.
+    if (currentDirectory == nil) {
+        currentDirectory = NSHomeDirectory();
+    }
+    if (currentDirectory == nil) {
+        currentDirectory = @"/";
+    }
     strcpy(sp->currentDir, [currentDirectory UTF8String]);
     strcpy(sp->previousDirectory, [currentDirectory UTF8String]);
     sp->localMiniRoot[0] = 0;
