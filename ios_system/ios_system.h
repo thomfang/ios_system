@@ -76,6 +76,7 @@ extern void ios_setBookmarkDictionaryName(NSString*);  // name of the dictionary
 extern void ios_switchSession(const void* sessionid);
 extern void ios_closeSession(const void* sessionid);
 extern void ios_setStreams(FILE* _stdin, FILE* _stdout, FILE* _stderr);
+extern void ios_setMainThread(bool isMain); // reset session isMainThread (serialized async embedders)
 extern void ios_settty(FILE* _tty);
 extern int ios_getstdin(void);
 extern int ios_gettty(void);

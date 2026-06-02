@@ -2313,6 +2313,26 @@ void ios_setStreams(FILE* _stdin, FILE* _stdout, FILE* _stderr) {
     currentSession->stderr = _stderr;
 }
 
+// Reset the current session's isMainThread flag.
+//
+// Embedders that run with joinMainThread == false (async/detached commands) and
+// reuse a session across commands need this. The isMainThread save/restore that
+// ios_system does around an sh command's sub-commands races with the detached
+// launch: the calling thread restores isMainThread = true right after
+// pthread_detach, but the sh thread may have already captured the pre-restore
+// (false) value, then writes it back last — leaving isMainThread stuck false on
+// the shared session. The next `sh -c ...` command then sees isMainThread == false
+// and is rejected with "We cannot have a sh command starting a sh command".
+//
+// A serialized embedder (one command at a time) knows every command it launches
+// is top-level, so it can call `ios_setMainThread(true)` right before each launch
+// to wipe any leaked state. No-op if no session exists yet (a fresh session is
+// created with isMainThread == TRUE anyway).
+void ios_setMainThread(bool isMain) {
+    if (currentSession == NULL) return;
+    currentSession->isMainThread = isMain;
+}
+
 void ios_settty(FILE* _tty) {
     if (currentSession == NULL) return;
     currentSession->tty = _tty;
