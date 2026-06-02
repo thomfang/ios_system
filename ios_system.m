@@ -1387,7 +1387,17 @@ int cd_main(int argc, char** argv) {
             [NSFileManager.defaultManager changeCurrentDirectoryPath:[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) lastObject]];
         }
         strcpy(currentSession->previousDirectory, currentSession->currentDir);
-        strcpy(currentSession->currentDir, NSFileManager.defaultManager.currentDirectoryPath.UTF8String);
+        // Same nil-guard rationale as initSessionParameters: if the cwd was
+        // removed between the changeCurrentDirectoryPath above and this read,
+        // currentDirectoryPath returns nil and strcpy(NULL) would crash.
+        NSString* resolvedCurrentDir = NSFileManager.defaultManager.currentDirectoryPath;
+        if (resolvedCurrentDir == nil) {
+            resolvedCurrentDir = NSHomeDirectory();
+        }
+        if (resolvedCurrentDir == nil) {
+            resolvedCurrentDir = @"/";
+        }
+        strcpy(currentSession->currentDir, resolvedCurrentDir.UTF8String);
     }
 
     newPreviousDirectory(); // If a command is running, this changes the directory it goes back to.
