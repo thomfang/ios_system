@@ -3712,27 +3712,19 @@ int ios_system(const char* inputCmd) {
                     }
                 }
             } else if ([commandName isEqualToString: @"curl"]) {
-                if (curlIsRunning) {
-                    display_alert(@"Only one curl command at a time", @"Please wait for the other one to end.");
-                    NSLog(@"%@", @"Too many curl commands running simultaneously.\n");
-                    function = &too_many_scripts;
-                    functionName = @"notAValidCommand";
-                    currentSession->global_errno = ENOENT;
-                    argv[0][0] = 'x'; // prevent reinitialization in cleanup_function
-                } else {
-                    curlIsRunning = true;
-                }
+                // Single-instance gate neutralized. The embedding app (Scripting)
+                // serializes every shell command through its own executionLock, so
+                // two curl instances never run concurrently. The original gate only
+                // produced spurious "Only one curl command at a time" rejections
+                // when a previous curl's pthread teardown — or a timed-out / aborted
+                // curl whose cleanup didn't run — left curlIsRunning stuck true,
+                // which then rejected every later curl. Keep setting the flag for
+                // cleanup symmetry, but never reject.
+                curlIsRunning = true;
             } else if ([commandName isEqualToString: @"scp"] || [commandName isEqualToString: @"sftp"]) {
-                if (scpIsRunning) {
-                    display_alert(@"Only one scp or sftp command at a time", @"Please wait for the other one to end.");
-                    NSLog(@"%@", @"Too many scp/sftp commands running simultaneously.\n");
-                    function = &too_many_scripts;
-                    functionName = @"notAValidCommand";
-                    currentSession->global_errno = ENOENT;
-                    argv[0][0] = 'x'; // prevent reinitialization in cleanup_function
-                } else {
-                    scpIsRunning = true;
-                }
+                // Same rationale as curl above — never reject; the embedding app
+                // guarantees serialization.
+                scpIsRunning = true;
             } else if ([commandName isEqualToString: @"rsync"] || [commandName isEqualToString: @"openrsync"]) {
                 // It's a rsync command. rsync between local directories requires two different commands.
                 // start by increasing the number of the interpreter, until we're out.
