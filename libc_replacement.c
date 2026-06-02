@@ -293,10 +293,22 @@ inline void ios_storeThreadId(pthread_t thread) {
         // the slot free (thread_ids = 0) and restore `current_pid` to the
         // parent pid that was active before this allocation, mirroring what
         // `ios_releaseThread` would do for a real thread.
-        thread_ids[current_pid] = 0;
-        pid_t parent = previousPid[current_pid];
-        if (parent >= 0 && parent < IOS_MAX_THREADS) {
-            current_pid = parent;
+        //
+        // Guard the rewind on `thread_ids[current_pid] == -1`: that is the
+        // exact "allocated by ios_nextAvailablePid, not yet started" marker.
+        // Only such a pid was just handed out under the lock we are about to
+        // release, so only then is rewinding current_pid to its parent
+        // correct. Any other state (a real thread already stored, or an
+        // already-freed 0 slot) means this is NOT a post-fork early-out, and
+        // we must not clobber current_pid. The unlock below stays
+        // unconditional to preserve the ios_nextAvailablePid/storeThreadId
+        // lock pairing.
+        if (thread_ids[current_pid] == -1) {
+            thread_ids[current_pid] = 0;
+            pid_t parent = previousPid[current_pid];
+            if (parent >= 0 && parent < IOS_MAX_THREADS) {
+                current_pid = parent;
+            }
         }
         pthread_mutex_unlock(&pid_mtx);
         return;
@@ -557,8 +569,12 @@ char** environmentVariables(pid_t pid) {
     // updates would be silently masked.
     //
     // Always pass through to `environ` for pid 0 so the host env and
-    // ios_system's view stay in sync. The environment[0] slot may still
-    // be written by storeEnvironment(), but nothing reads it anymore.
+    // ios_system's view stay in sync. In practice environment[0] stays NULL:
+    // storeEnvironment() only ever writes the child pid that
+    // ios_nextAvailablePid just allocated (always >= 1), so libc_getenv /
+    // ios_setenv_pid at pid 0 — which read environment[current_pid] directly —
+    // also fall through to environ. This pid==0 shortcut just makes that
+    // invariant explicit for the snapshot path below.
     if (pid == 0) {
         return environ;
     }
